@@ -756,7 +756,7 @@ def _optimize(operations):
         if i['path'] in ops_to_replace and ops_to_replace[i['path']][1]:
             patch = make_patch(*ops_to_replace[i['path']]).patch
             for x in patch:
-                x['path'] = '{}{}'.format(i['path'], x['path'])
+                x['path'] = i['path'] + x['path']
                 x['value'] = x.get('value', '')
             index = result.index(i)
             result[index:index+1] = patch
