@@ -690,7 +690,8 @@ def _compare_left(path, src, left, shift):
              # yes, there should be any value field, but we'll use it
              # to apply `move` optimization a bit later and will remove
              # it in _optimize function.
-             'value': src[idx - shift],
+             #'value': src[idx - shift],
+             'value': src[idx - shift] if shift>0 else src[idx],
              'path': ptr.path,
             },
             shift - 1
@@ -726,12 +727,15 @@ def _optimize(operations):
     result = []
     ops_by_path = {}
     ops_by_value = {}
+    ops_to_replace = {}
     add_remove = set(['add', 'remove'])
     for item in operations:
         # could we apply "move" optimization for dict values?
         hashable_value = not isinstance(item['value'],
                                         (MutableMapping, MutableSequence))
         if item['path'] in ops_by_path:
+            if item['op'] == 'add':
+                ops_to_replace[item['path']] = (ops_to_replace[item['path']][0], item['value'])
             _optimize_using_replace(ops_by_path[item['path']], item)
             continue
         if hashable_value and item['value'] in ops_by_value:
@@ -745,6 +749,17 @@ def _optimize(operations):
         ops_by_path[item['path']] = item
         if hashable_value:
             ops_by_value[item['value']] = item
+        if item['op'] == 'remove':
+            ops_to_replace[item['path']] = (item['value'], None)
+
+    for i in result:
+        if i['path'] in ops_to_replace and ops_to_replace[i['path']][1]:
+            patch = make_patch(*ops_to_replace[i['path']]).patch
+            for x in patch:
+                x['path'] = '{}{}'.format(i['path'], x['path'])
+                x['value'] = x.get('value', '')
+            index = result.index(i)
+            result[index:index+1] = patch
 
     # cleanup
     ops_by_path.clear()
