@@ -151,7 +151,7 @@ def apply_patch(doc, patch, in_place=False):
     return patch.apply(doc, in_place)
 
 
-def make_patch(src, dst):
+def make_patch(src, dst, do_optimize=True):
     """Generates patch by comparing of two document objects. Actually is
     a proxy to :meth:`JsonPatch.from_diff` method.
 
@@ -161,6 +161,9 @@ def make_patch(src, dst):
     :param dst: Data source document object.
     :type dst: dict
 
+    :param do_optimize: Whether to apply optimization (optional - default True)
+    :type do_optimize: bool
+
     >>> src = {'foo': 'bar', 'numbers': [1, 3, 4, 8]}
     >>> dst = {'baz': 'qux', 'numbers': [1, 4, 7]}
     >>> patch = make_patch(src, dst)
@@ -168,7 +171,7 @@ def make_patch(src, dst):
     >>> new == dst
     True
     """
-    return JsonPatch.from_diff(src, dst)
+    return JsonPatch.from_diff(src, dst, do_optimize)
 
 
 class JsonPatch(object):
@@ -265,7 +268,7 @@ class JsonPatch(object):
         return cls(patch)
 
     @classmethod
-    def from_diff(cls, src, dst):
+    def from_diff(cls, src, dst, do_optimize=True):
         """Creates JsonPatch instance based on comparing of two document
         objects. Json patch would be created for `src` argument against `dst`
         one.
@@ -276,38 +279,42 @@ class JsonPatch(object):
         :param dst: Data source document object.
         :type dst: dict
 
+        :param do_optimize: Whether to apply optimization (optional - default True)
+        :type do_optimize: bool
+
         :return: :class:`JsonPatch` instance.
 
         >>> src = {'foo': 'bar', 'numbers': [1, 3, 4, 8]}
         >>> dst = {'baz': 'qux', 'numbers': [1, 4, 7]}
         >>> patch = JsonPatch.from_diff(src, dst)
         >>> new = patch.apply(src)
+        >>>
         >>> new == dst
         True
         """
-        def compare_values(path, value, other):
+        def compare_values(path, value, other, do_optimize):
             if value == other:
                 return
             if isinstance(value, MutableMapping) and \
                     isinstance(other, MutableMapping):
-                for operation in compare_dicts(path, value, other):
+                for operation in compare_dicts(path, value, other, do_optimize):
                     yield operation
             elif isinstance(value, MutableSequence) and \
                     isinstance(other, MutableSequence):
-                for operation in compare_lists(path, value, other):
+                for operation in compare_lists(path, value, other, do_optimize):
                     yield operation
             else:
                 ptr = JsonPointer.from_parts(path)
                 yield {'op': 'replace', 'path': ptr.path, 'value': other}
 
-        def compare_dicts(path, src, dst):
+        def compare_dicts(path, src, dst, do_optimize):
             for key in src:
                 if key not in dst:
                     ptr = JsonPointer.from_parts(path + [key])
                     yield {'op': 'remove', 'path': ptr.path}
                     continue
                 current = path + [key]
-                for operation in compare_values(current, src[key], dst[key]):
+                for operation in compare_values(current, src[key], dst[key], do_optimize):
                     yield operation
             for key in dst:
                 if key not in src:
@@ -316,10 +323,10 @@ class JsonPatch(object):
                            'path': ptr.path,
                            'value': dst[key]}
 
-        def compare_lists(path, src, dst):
-            return _compare_lists(path, src, dst)
+        def compare_lists(path, src, dst, do_optimize):
+            return _compare_lists(path, src, dst, do_optimize)
 
-        return cls(list(compare_values([], src, dst)))
+        return cls(list(compare_values([], src, dst, do_optimize)))
 
     def to_string(self):
         """Returns patch set as JSON string."""
@@ -554,9 +561,12 @@ class CopyOperation(PatchOperation):
         return obj
 
 
-def _compare_lists(path, src, dst):
+def _compare_lists(path, src, dst, do_optimize):
     """Compares two lists objects and return JSON patch about."""
-    return _optimize(_compare(path, src, dst, *_split_by_common_seq(src, dst)))
+
+    res = _compare(path, src, dst, *_split_by_common_seq(src, dst))
+
+    return _optimize(res) if do_optimize else res
 
 
 def _longest_common_subseq(src, dst):
@@ -723,7 +733,9 @@ def _optimize(operations):
        and replaces them with ``replace`` operation.
     2. Seeks pair of ``remove`` and ``add`` operations for the same value
        and replaces them with ``move`` operation.
-    """
+   ..")
+   """
+
     result = []
     ops_by_path = {}
     ops_by_value = {}
@@ -773,8 +785,8 @@ def _optimize(operations):
 def _optimize_using_replace(prev, cur):
     """Optimises JSON patch by using ``replace`` operation instead of
     ``remove`` and ``add`` against the same path."""
-    prev['op'] = 'replace'
     if cur['op'] == 'add':
+        prev['op'] = 'replace'
         prev['value'] = cur['value']
 
 
