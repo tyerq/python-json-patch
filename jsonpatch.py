@@ -565,9 +565,7 @@ class CopyOperation(PatchOperation):
 def _compare_lists(path, src, dst, do_optimize):
     """Compares two lists objects and return JSON patch about."""
 
-    res = _compare(path, src, dst, *_split_by_common_seq(src, dst))
-
-    return _optimize(res) if do_optimize else res
+    return _optimize(_compare(path, src, dst, *_split_by_common_seq(src, dst)), do_optimize)
 
 
 def _longest_common_subseq(src, dst):
@@ -725,7 +723,7 @@ def _compare_right(path, dst, right, shift):
         shift += 1
 
 
-def _optimize(operations):
+def _optimize(operations, do_optimize):
     """Optimizes operations which was produced by lists comparison.
 
     Actually it does two kinds of optimizations:
@@ -748,40 +746,43 @@ def _optimize(operations):
     for num, item in enumerate(operations):
         item['num'] = num
 
-        # if min_index for current list changed, cancel all optimizations on items after min index
-        path_index = _get_index_from_path(item['path'])
-        if path_index:
-            item['mi_path'], item['mi_index'] = path_index
-            if item['mi_path'] not in min_index or item['mi_index'] < min_index[item['mi_path']]:
-                min_index[item['mi_path']] = item['mi_index']
+        if do_optimize:
 
-            for i, op in ops_by_path.items():
-                if min_index[op['mi_path']] < op['mi_index']:
-                    del ops_by_path[i]
+            # if min_index for current list changed, cancel all optimizations on items after min index
+            path_index = _get_index_from_path(item['path'])
+            if path_index:
+                item['mi_path'], item['mi_index'] = path_index
+                if item['mi_path'] not in min_index or item['mi_index'] < min_index[item['mi_path']]:
+                    min_index[item['mi_path']] = item['mi_index']
 
-            for i, op in ops_by_value.items():
-                if min_index[op['mi_path']] < op['mi_index']:
-                    del ops_by_value[i]
+                for i, op in ops_by_path.items():
+                    if min_index[op['mi_path']] < op['mi_index']:
+                        del ops_by_path[i]
 
-        # could we apply "move" optimization for dict values?
-        hashable_value = not isinstance(item['value'],
-                                        (MutableMapping, MutableSequence))
-        if item['path'] in ops_by_path \
-                and add_remove == {ops_by_path[item['path']]['op'], item['op']}:
-            prev_item = ops_by_path[item['path']]
-            ops_to_replace[prev_item['num']] = _optimize_using_replace(prev_item, item)
-            item['del'] = True
-            ops_by_path.pop(item['path'])
-        if hashable_value and item['value'] in ops_by_value \
-                and add_remove == {ops_by_value[item['value']]['op'], item['op']}:
-            prev_item = ops_by_value[item['value']]
-            ops_to_replace[prev_item['num']] = _optimize_using_move(prev_item, item)
-            item['del'] = True
-            ops_by_value.pop(item['value'])
+                for i, op in ops_by_value.items():
+                    if min_index[op['mi_path']] < op['mi_index']:
+                        del ops_by_value[i]
+
+            # could we apply "move" optimization for dict values?
+            hashable_value = not isinstance(item['value'],
+                                            (MutableMapping, MutableSequence))
+            if item['path'] in ops_by_path \
+                    and add_remove == {ops_by_path[item['path']]['op'], item['op']}:
+                prev_item = ops_by_path[item['path']]
+                ops_to_replace[prev_item['num']] = _optimize_using_replace(prev_item, item)
+                item['del'] = True
+                ops_by_path.pop(item['path'])
+            if hashable_value and item['value'] in ops_by_value \
+                    and add_remove == {ops_by_value[item['value']]['op'], item['op']}:
+                prev_item = ops_by_value[item['value']]
+                ops_to_replace[prev_item['num']] = _optimize_using_move(prev_item, item)
+                item['del'] = True
+                ops_by_value.pop(item['value'])
+            ops_by_path[item['path']] = item
+            if hashable_value:
+                ops_by_value[item['value']] = item
+
         result.append(item)
-        ops_by_path[item['path']] = item
-        if hashable_value:
-            ops_by_value[item['value']] = item
 
     # cleanup
     ops_by_path.clear()
