@@ -41,6 +41,7 @@ import inspect
 import itertools
 import json
 import sys
+import re
 
 try:
     from collections.abc import MutableMapping, MutableSequence
@@ -741,45 +742,74 @@ def _optimize(operations):
     ops_by_value = {}
     ops_to_replace = {}
     add_remove = set(['add', 'remove'])
-    for item in operations:
+    # to keep track of the minimum list index we have changed
+    # to do no replaces on items after this index for fear of messing up operations paths
+    min_index = {}
+    for num, item in enumerate(operations):
+        item['num'] = num
+
+        # if min_index for current list changed, cancel all optimizations on items after min index
+        path_index = _get_index_from_path(item['path'])
+        if path_index:
+            item['mi_path'], item['mi_index'] = path_index
+            if item['mi_path'] not in min_index or item['mi_index'] < min_index[item['mi_path']]:
+                min_index[item['mi_path']] = item['mi_index']
+
+            for i, op in ops_by_path.items():
+                if min_index[op['mi_path']] < op['mi_index']:
+                    del ops_by_path[i]
+
+            for i, op in ops_by_value.items():
+                if min_index[op['mi_path']] < op['mi_index']:
+                    del ops_by_value[i]
+
         # could we apply "move" optimization for dict values?
         hashable_value = not isinstance(item['value'],
                                         (MutableMapping, MutableSequence))
-        if item['path'] in ops_by_path:
-            if item['op'] == 'add':
-                ops_to_replace[item['path']] = (ops_to_replace[item['path']][0], item['value'])
-            _optimize_using_replace(ops_by_path[item['path']], item)
-            continue
-        if hashable_value and item['value'] in ops_by_value:
+        if item['path'] in ops_by_path \
+                and add_remove == {ops_by_path[item['path']]['op'], item['op']}:
+            prev_item = ops_by_path[item['path']]
+            ops_to_replace[prev_item['num']] = _optimize_using_replace(prev_item, item)
+            item['del'] = True
+            ops_by_path.pop(item['path'])
+        if hashable_value and item['value'] in ops_by_value \
+                and add_remove == {ops_by_value[item['value']]['op'], item['op']}:
             prev_item = ops_by_value[item['value']]
-            # ensure that we processing pair of add-remove ops
-            if set([item['op'], prev_item['op']]) == add_remove:
-                _optimize_using_move(prev_item, item)
-                ops_by_value.pop(item['value'])
-                continue
+            ops_to_replace[prev_item['num']] = _optimize_using_move(prev_item, item)
+            item['del'] = True
+            ops_by_value.pop(item['value'])
         result.append(item)
         ops_by_path[item['path']] = item
         if hashable_value:
             ops_by_value[item['value']] = item
-        if item['op'] == 'remove':
-            ops_to_replace[item['path']] = (item['value'], None)
-
-    for i in result:
-        if i['path'] in ops_to_replace and ops_to_replace[i['path']][1]:
-            patch = make_patch(*ops_to_replace[i['path']]).patch
-            for x in patch:
-                x['path'] = i['path'] + x['path']
-                x['value'] = x.get('value', '')
-            index = result.index(i)
-            result[index:index+1] = patch
 
     # cleanup
     ops_by_path.clear()
     ops_by_value.clear()
     for item in result:
+        if item['num'] in ops_to_replace:
+            item = ops_to_replace[item['num']]
+
+        item.pop('num')
+        if 'mi_path' in item:
+            item.pop('mi_path')
+        if 'mi_index' in item:
+            item.pop('mi_index')
         if item['op'] == 'remove':
             item.pop('value')  # strip our hack
-        yield item
+
+        # instead of rebuilding result, simply don't return items marked for removal
+        if 'del' not in item:
+            yield item
+
+
+ARRAY_INDEX_PATTERN = re.compile(r'/\d$')
+
+def _get_index_from_path(path):
+    """Retrieves array index from path"""
+    if re.search(ARRAY_INDEX_PATTERN, path):
+        comps = path.split('/')
+        return '/'.join(comps[:-1]), int(comps[-1])
 
 
 def _optimize_using_replace(prev, cur):
@@ -788,6 +818,8 @@ def _optimize_using_replace(prev, cur):
     if cur['op'] == 'add':
         prev['op'] = 'replace'
         prev['value'] = cur['value']
+
+    return prev
 
 
 def _optimize_using_move(prev_item, item):
@@ -808,3 +840,5 @@ def _optimize_using_move(prev_item, item):
         move_from = int(move_from) - 1
         prev_item['from'] = head + '/%d' % move_from
         prev_item['path'] = move_to
+
+    return prev_item
