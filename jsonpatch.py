@@ -812,14 +812,14 @@ def _get_index_from_path(path):
         return '/'.join(comps[:-1]), int(comps[-1])
 
 
-def _optimize_using_replace(prev, cur):
+def _optimize_using_replace(prev_item, item):
     """Optimises JSON patch by using ``replace`` operation instead of
     ``remove`` and ``add`` against the same path."""
-    if cur['op'] == 'add':
-        prev['op'] = 'replace'
-        prev['value'] = cur['value']
+    if item['op'] == 'add':
+        prev_item['op'] = 'replace'
+        prev_item['value'] = item['value']
 
-    return prev
+    return prev_item
 
 
 def _optimize_using_move(prev_item, item):
