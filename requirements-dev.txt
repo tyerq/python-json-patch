@@ -1,2 +1,3 @@
 wheel
 pandoc==1.0.0-alpha.3
+random-json==0.0.1
